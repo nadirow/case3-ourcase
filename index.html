@@ -54,12 +54,12 @@ textarea{width:100%;border:0;outline:0;resize:none;max-height:120px;min-height:2
   </form>
   <div class="bottom-note">يوسف — محادثة تجريبية</div>
 </div>
+
 <script>
-/*
-  After deploying your Cloudflare Worker, paste its URL below.
-  Example: https://youssef-chat.your-subdomain.workers.dev
-*/
 const WORKER_URL = "https://case3-ourcase.raoufvegeta.workers.dev";
+
+const MAX_SENT_MESSAGES = 3;
+const COUNTER_KEY = "youcefSentCount";
 
 const chat = document.getElementById("chat");
 const form = document.getElementById("form");
@@ -67,63 +67,156 @@ const input = document.getElementById("message");
 const send = document.getElementById("send");
 const typing = document.getElementById("typing");
 const statusText = document.getElementById("status");
-let history = []; // Memory only while this page remains open; never saved to a database.
 
-function timeNow(){ return new Intl.DateTimeFormat("ar-DZ",{hour:"2-digit",minute:"2-digit"}).format(new Date()); }
-function scrollBottom(){ chat.scrollTop = chat.scrollHeight; }
-function addMessage(text, kind){
+let history = [];
+
+let sentMessageCount = Number(
+  localStorage.getItem(COUNTER_KEY) || 0
+);
+
+// Protect against invalid or negative stored values.
+if (!Number.isSafeInteger(sentMessageCount) || sentMessageCount < 0) {
+  sentMessageCount = 0;
+}
+
+function timeNow() {
+  return new Intl.DateTimeFormat("ar-DZ", {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date());
+}
+
+function scrollBottom() {
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function addMessage(text, kind) {
   const bubble = document.createElement("div");
   bubble.className = "msg " + kind;
+
   const body = document.createElement("div");
   body.textContent = text;
+
   const meta = document.createElement("div");
   meta.className = "meta";
-  const time = document.createElement("span"); time.textContent = timeNow(); meta.appendChild(time);
-  if(kind === "out"){ const ticks = document.createElement("span"); ticks.className="ticks"; ticks.textContent="✓✓"; meta.appendChild(ticks); }
-  bubble.append(body,meta);
+
+  const time = document.createElement("span");
+  time.textContent = timeNow();
+  meta.appendChild(time);
+
+  if (kind === "out") {
+    const ticks = document.createElement("span");
+    ticks.className = "ticks";
+    ticks.textContent = "✓✓";
+    meta.appendChild(ticks);
+  }
+
+  bubble.append(body, meta);
   chat.insertBefore(bubble, typing);
   scrollBottom();
 }
-function showError(text){
-  const el=document.createElement("div");el.className="error";el.textContent=text;
-  chat.insertBefore(el,typing);scrollBottom();
-}
-function resizeInput(){input.style.height="auto";input.style.height=Math.min(input.scrollHeight,120)+"px";}
-input.addEventListener("input",resizeInput);
-input.addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();form.requestSubmit();}});
 
-form.addEventListener("submit", async e=>{
+function showError(text) {
+  const el = document.createElement("div");
+  el.className = "error";
+  el.textContent = text;
+  chat.insertBefore(el, typing);
+  scrollBottom();
+}
+
+function resizeInput() {
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 120) + "px";
+}
+
+input.addEventListener("input", resizeInput);
+
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    form.requestSubmit();
+  }
+});
+
+form.addEventListener("submit", async e => {
   e.preventDefault();
-  const text=input.value.trim();
-  if(!text || send.disabled)return;
-  if(WORKER_URL==="PASTE_YOUR_CLOUDFLARE_WORKER_URL_HERE"){
-    showError("باقي خطوة صغيرة: اربط الموقع برابط Cloudflare Worker حسب التعليمات في README.");
+
+  const text = input.value.trim();
+  if (!text || send.disabled) return;
+
+  // After 30 user messages, reply locally without calling Cloudflare.
+  if (sentMessageCount >= MAX_SENT_MESSAGES) {
+    addMessage(text, "out");
+    input.value = "";
+    resizeInput();
+
+    addMessage("انا مشغول اسألني لاحقا", "in");
     return;
   }
-  addMessage(text,"out");
-  input.value="";resizeInput();
-  history.push({role:"user",content:text});
-  // Keep only recent turns to reduce token use.
-  history=history.slice(-12);
-  send.disabled=true;typing.style.display="block";statusText.textContent="يكتب...";
+
+  if (!WORKER_URL || WORKER_URL.includes("PASTE_YOUR")) {
+    showError("لازم تربط الموقع برابط Cloudflare Worker الصحيح.");
+    return;
+  }
+
+  addMessage(text, "out");
+  input.value = "";
+  resizeInput();
+
+  // Count only messages allowed to make an AI request.
+  sentMessageCount++;
+  localStorage.setItem(COUNTER_KEY, String(sentMessageCount));
+
+  history.push({ role: "user", content: text });
+  history = history.slice(-15);
+
+  send.disabled = true;
+  typing.style.display = "block";
+  statusText.textContent = "يكتب...";
   scrollBottom();
-  try{
-    const response=await fetch(WORKER_URL,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({messages:history})
+
+  try {
+    const response = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history })
     });
-    const data=await response.json().catch(()=>({}));
-    if(!response.ok)throw new Error(data.error||"تعذر الاتصال بالذكاء الاصطناعي ("+response.status+")");
-    if(typeof data.reply!=="string"||!data.reply.trim())throw new Error("وصل رد غير صالح من الخادم.");
-    history.push({role:"assistant",content:data.reply});
-    history=history.slice(-12);
-    addMessage(data.reply,"in");
-  }catch(err){
-    history.pop(); // Let the visitor retry without retaining a failed user turn.
-    showError("ما قدرتش نجاوبك الآن. "+(err.message||"تحقق من الاتصال وإعدادات Cloudflare."));
-  }finally{
-    typing.style.display="none";send.disabled=false;statusText.textContent="متصل";input.focus();scrollBottom();
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        data.error ||
+        "تعذر الاتصال بالذكاء الاصطناعي (" + response.status + ")"
+      );
+    }
+
+    if (typeof data.reply !== "string" || !data.reply.trim()) {
+      throw new Error("وصل رد غير صالح من الخادم.");
+    }
+
+    history.push({ role: "assistant", content: data.reply });
+    history = history.slice(-15);
+
+    addMessage(data.reply, "in");
+  } catch (err) {
+    // Allow a retry without keeping the failed turn in conversation history.
+    history.pop();
+
+    // Restore the counter because this request did not succeed.
+    sentMessageCount = Math.max(0, sentMessageCount - 1);
+    localStorage.setItem(COUNTER_KEY, String(sentMessageCount));
+
+    showError(
+      "ما قدرتش نجاوبك الآن. " +
+      (err.message || "تحقق من الاتصال وإعدادات Cloudflare.")
+    );
+  } finally {
+    typing.style.display = "none";
+    send.disabled = false;
+    statusText.textContent = "متصل";
+    input.focus();
+    scrollBottom();
   }
 });
 </script>
