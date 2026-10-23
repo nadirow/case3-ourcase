@@ -55,11 +55,13 @@ textarea{width:100%;border:0;outline:0;resize:none;max-height:120px;min-height:2
   <div class="bottom-note">يوسف — محادثة تجريبية</div>
 </div>
 
+
 <script>
 const WORKER_URL = "https://case3-ourcase.raoufvegeta.workers.dev";
 
-const MAX_SENT_MESSAGES = 3;
+const MAX_SENT_MESSAGES = 50;
 const COUNTER_KEY = "youcefSentCount";
+const CHAT_STORAGE_KEY = "youcefChatHistory";
 
 const chat = document.getElementById("chat");
 const form = document.getElementById("form");
@@ -74,7 +76,6 @@ let sentMessageCount = Number(
   localStorage.getItem(COUNTER_KEY) || 0
 );
 
-// Protect against invalid or negative stored values.
 if (!Number.isSafeInteger(sentMessageCount) || sentMessageCount < 0) {
   sentMessageCount = 0;
 }
@@ -90,7 +91,25 @@ function scrollBottom() {
   chat.scrollTop = chat.scrollHeight;
 }
 
-function addMessage(text, kind) {
+function saveConversation() {
+  try {
+    const messages = [...chat.querySelectorAll(".msg")].map(bubble => ({
+      text: bubble.querySelector("div")?.textContent || "",
+      kind: bubble.classList.contains("out") ? "out" : "in",
+      time: bubble.querySelector(".meta span")?.textContent || timeNow()
+    }));
+
+    localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
+      messages,
+      history,
+      sentMessageCount
+    }));
+  } catch (error) {
+    console.error("Could not save conversation:", error);
+  }
+}
+
+function addMessage(text, kind, savedTime = null) {
   const bubble = document.createElement("div");
   bubble.className = "msg " + kind;
 
@@ -101,7 +120,7 @@ function addMessage(text, kind) {
   meta.className = "meta";
 
   const time = document.createElement("span");
-  time.textContent = timeNow();
+  time.textContent = savedTime || timeNow();
   meta.appendChild(time);
 
   if (kind === "out") {
@@ -114,6 +133,8 @@ function addMessage(text, kind) {
   bubble.append(body, meta);
   chat.insertBefore(bubble, typing);
   scrollBottom();
+
+  saveConversation();
 }
 
 function showError(text) {
@@ -121,6 +142,48 @@ function showError(text) {
   el.className = "error";
   el.textContent = text;
   chat.insertBefore(el, typing);
+  scrollBottom();
+}
+
+function loadConversation() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(CHAT_STORAGE_KEY) || "null"
+    );
+
+    if (!saved) return;
+
+    if (Array.isArray(saved.messages)) {
+      chat.querySelectorAll(".msg").forEach(el => el.remove());
+
+      for (const message of saved.messages) {
+        if (typeof message.text !== "string") continue;
+        if (!["in", "out"].includes(message.kind)) continue;
+
+        addMessage(message.text, message.kind, message.time);
+      }
+    }
+
+    if (Array.isArray(saved.history)) {
+      history = saved.history.filter(message =>
+        message &&
+        ["user", "assistant"].includes(message.role) &&
+        typeof message.content === "string"
+      ).slice(-15);
+    }
+
+    if (Number.isSafeInteger(saved.sentMessageCount) &&
+        saved.sentMessageCount >= 0) {
+      sentMessageCount = Math.max(
+        sentMessageCount,
+        saved.sentMessageCount
+      );
+    }
+  } catch (error) {
+    console.error("Could not load conversation:", error);
+  }
+
+  localStorage.setItem(COUNTER_KEY, String(sentMessageCount));
   scrollBottom();
 }
 
@@ -144,7 +207,7 @@ form.addEventListener("submit", async e => {
   const text = input.value.trim();
   if (!text || send.disabled) return;
 
-  // After 30 user messages, reply locally without calling Cloudflare.
+  // After 50 messages, reply locally without calling Cloudflare.
   if (sentMessageCount >= MAX_SENT_MESSAGES) {
     addMessage(text, "out");
     input.value = "";
@@ -163,12 +226,12 @@ form.addEventListener("submit", async e => {
   input.value = "";
   resizeInput();
 
-  // Count only messages allowed to make an AI request.
   sentMessageCount++;
   localStorage.setItem(COUNTER_KEY, String(sentMessageCount));
 
   history.push({ role: "user", content: text });
   history = history.slice(-15);
+  saveConversation();
 
   send.disabled = true;
   typing.style.display = "block";
@@ -199,13 +262,13 @@ form.addEventListener("submit", async e => {
     history = history.slice(-15);
 
     addMessage(data.reply, "in");
+    saveConversation();
   } catch (err) {
-    // Allow a retry without keeping the failed turn in conversation history.
     history.pop();
 
-    // Restore the counter because this request did not succeed.
     sentMessageCount = Math.max(0, sentMessageCount - 1);
     localStorage.setItem(COUNTER_KEY, String(sentMessageCount));
+    saveConversation();
 
     showError(
       "ما قدرتش نجاوبك الآن. " +
@@ -219,6 +282,10 @@ form.addEventListener("submit", async e => {
     scrollBottom();
   }
 });
+
+// Restore saved messages and conversation history on page load.
+loadConversation();
 </script>
+
 </body>
 </html>
