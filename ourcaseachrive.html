@@ -95,7 +95,7 @@ const $=s=>document.querySelector(s);
 const grid=$('#resultsGrid'), input=$('#searchInput'), overlay=$('#detailOverlay');
 let lastFocus=null;
 // Front-end-only demo login. This password is visible in the page source and is not real security.
-const DEMO_PASSWORD='ZpSH4XRb';
+const DEMO_PASSWORD='ZPSH4XRB';
 const loginScreen=$('#loginScreen'), appShell=$('#appShell'), loginForm=$('#loginForm');
 function showLogin(){appShell.hidden=true;loginScreen.hidden=false;$('#loginPassword').value='';$('#loginError').textContent='';$('#loginUsername').focus();}
 function showApp(username){loginScreen.hidden=true;appShell.hidden=false;$('#activeUsername').textContent=username;$('#loginPassword').value='';$('#loginError').textContent='';}
